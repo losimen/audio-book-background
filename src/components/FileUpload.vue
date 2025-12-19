@@ -2,9 +2,12 @@
 import { ref } from 'vue';
 import { db } from '../db';
 import type { AudioFile } from '../db';
+import { saveFileToOPFS, isOPFSSupported } from '../opfs';
 
 const emit = defineEmits(['uploaded']);
 const isUploading = ref(false);
+const uploadProgress = ref(0);
+const uploadStatus = ref('');
 const fileInput = ref<HTMLInputElement | null>(null);
 
 const triggerUpload = () => {
@@ -17,26 +20,44 @@ const handleFileChange = async (event: Event) => {
   
   if (!files || files.length === 0) return;
 
-  isUploading.value = true;
   const file = files[0];
-  if (!file) {
-      isUploading.value = false;
-      return;
+  if (!file) return;
+  
+  // Check OPFS support
+  if (!isOPFSSupported()) {
+    alert('Your browser does not support the required storage API. Please use a modern browser.');
+    return;
   }
 
+  isUploading.value = true;
+  uploadProgress.value = 0;
+  uploadStatus.value = 'Preparing...';
+
   try {
-    // Get duration (simplified, for better duration we need to load it into an audio element)
-    // For now we just store it and let the player handle specific duration logic or update it later.
+    // First, create the metadata record in IndexedDB to get an ID
+    uploadStatus.value = 'Creating record...';
+    
     const newFile: Omit<AudioFile, 'id'> = {
       name: file.name,
-      blob: file,
-      mimeType: file.type,
+      mimeType: file.type || 'audio/mpeg',
+      fileSize: file.size,
       uploadedAt: new Date(),
-      duration: 0, // Placeholder, can be updated when playing
+      duration: 0,
       playbackPosition: 0
     };
 
-    await db.files.add(newFile);
+    const fileId = await db.files.add(newFile);
+    
+    // Now save the actual file data to OPFS (streams in chunks, no memory issues)
+    uploadStatus.value = 'Saving audio...';
+    
+    await saveFileToOPFS(fileId as number, file, (progress) => {
+      uploadProgress.value = progress;
+    });
+    
+    uploadProgress.value = 100;
+    uploadStatus.value = 'Complete!';
+    
     emit('uploaded');
     
     // Reset input
@@ -46,6 +67,8 @@ const handleFileChange = async (event: Event) => {
     alert('Failed to save file. Storage might be full.');
   } finally {
     isUploading.value = false;
+    uploadProgress.value = 0;
+    uploadStatus.value = '';
   }
 };
 </script>
@@ -61,9 +84,16 @@ const handleFileChange = async (event: Event) => {
     />
     
     <button class="upload-btn" @click="triggerUpload" :disabled="isUploading">
-      <span v-if="isUploading">Saving...</span>
+      <span v-if="isUploading && uploadProgress > 0">
+        Saving... {{ uploadProgress }}%
+      </span>
+      <span v-else-if="isUploading">Reading file...</span>
       <span v-else>+ Upload Audio</span>
     </button>
+    
+    <div v-if="isUploading" class="progress-bar">
+      <div class="progress-fill" :style="{ width: uploadProgress + '%' }"></div>
+    </div>
   </div>
 </template>
 
@@ -71,7 +101,9 @@ const handleFileChange = async (event: Event) => {
 .upload-container {
   padding: 20px;
   display: flex;
-  justify-content: center;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
 }
 
 .hidden-input {
@@ -97,7 +129,23 @@ const handleFileChange = async (event: Event) => {
 }
 
 .upload-btn:disabled {
-  opacity: 0.5;
+  opacity: 0.7;
   cursor: not-allowed;
 }
+
+.progress-bar {
+  width: 100%;
+  max-width: 400px;
+  height: 6px;
+  background: #38383A;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: var(--app-accent);
+  transition: width 0.2s ease-out;
+}
 </style>
+

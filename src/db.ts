@@ -3,8 +3,11 @@ import Dexie, { type Table } from 'dexie';
 export interface AudioFile {
   id?: number;
   name: string;
-  blob: Blob;
+  // Audio data is now stored in OPFS (Origin Private File System)
+  // for better performance with large files on iOS
+  // The file can be retrieved using the id: opfs.getFileUrlFromOPFS(id)
   mimeType: string;
+  fileSize: number; // in bytes
   uploadedAt: Date;
   duration: number; // in seconds
   lastPlayedAt?: Date;
@@ -25,13 +28,26 @@ export class AudioDatabase extends Dexie {
 
   constructor() {
     super('AudioBackgroundListenerDB');
+    
+    // Version 4: Audio data moved to OPFS, only metadata in IndexedDB
+    this.version(4).stores({
+      files: '++id, name, uploadedAt, lastPlayedAt',
+      bookmarks: '++id, fileId, time'
+    });
+    
+    // Keep old versions for migration path
+    this.version(3).stores({
+      files: '++id, name, uploadedAt, lastPlayedAt',
+      bookmarks: '++id, fileId, time'
+    });
+    
     this.version(2).stores({
       files: '++id, name, uploadedAt, lastPlayedAt',
       bookmarks: '++id, fileId, time'
     });
-    // Keep version 1 for backward compatibility if needed, but Dexie handles upgrades well usually
-    // If this is a fresh dev environment, version 1 is fine to plain overwrite or use version 2
   }
 }
 
 export const db = new AudioDatabase();
+
+

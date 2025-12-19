@@ -43,6 +43,13 @@ const deleteFile = async (id: number) => {
   if (!confirm('Are you sure you want to delete this file?')) return;
   
   try {
+    // Delete from OPFS first (if it fails, we keep the DB record so user can try again)
+    // Dynamic import to avoid issues if OPFS isn't supported/loaded yet
+    const { deleteFileFromOPFS, isOPFSSupported } = await import('../opfs');
+    if (isOPFSSupported()) {
+        await deleteFileFromOPFS(id);
+    }
+    
     await db.transaction('rw', db.files, db.bookmarks, async () => {
       await db.files.delete(id);
       await db.bookmarks.where('fileId').equals(id).delete();

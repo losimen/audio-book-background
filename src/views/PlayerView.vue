@@ -172,8 +172,18 @@ onMounted(async () => {
         }
         fileData.value = file;
         
-        const playableBlob = new Blob([file.blob], { type: file.mimeType || 'audio/mpeg' });
-        audioUrl.value = URL.createObjectURL(playableBlob);
+        // Load audio from OPFS (Origin Private File System)
+        const { getFileUrlFromOPFS } = await import('../opfs');
+        const url = await getFileUrlFromOPFS(fileId);
+        
+        if (!url) {
+            console.error('Audio file not found in OPFS');
+            alert('Audio file data is missing. Please re-upload the file.');
+            router.push('/');
+            return;
+        }
+        
+        audioUrl.value = url;
         
         if (file.playbackPosition) {
             lastSavedTime.value = file.playbackPosition;
