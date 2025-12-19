@@ -1,31 +1,5 @@
 import Dexie, { type Table } from 'dexie';
-
-export interface AudioFile {
-  id?: number;
-  name: string;
-  mimeType: string;
-  fileSize: number; // in bytes
-  chunkCount: number; // number of 1MB chunks
-  uploadedAt: Date;
-  duration: number; // in seconds
-  lastPlayedAt?: Date;
-  playbackPosition: number; // in seconds
-}
-
-export interface FileChunk {
-  id?: number;
-  fileId: number;
-  index: number;
-  data: ArrayBuffer;
-}
-
-export interface Bookmark {
-  id?: number;
-  fileId: number;
-  time: number;
-  text?: string;
-  createdAt: Date;
-}
+import type { AudioFile, Bookmark, FileChunk } from './types';
 
 export class AudioDatabase extends Dexie {
   files!: Table<AudioFile>;

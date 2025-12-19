@@ -2,10 +2,11 @@
 import { ref, onMounted, onUnmounted, computed, nextTick } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { db } from '../db';
-import type { AudioFile, Bookmark } from '../db';
+import type { AudioFile, Bookmark, FileChunk } from '../types';
 import TimelineItem from '../components/TimelineItem.vue';
 import NoteEditor from '../components/NoteEditor.vue';
 import { liveQuery, type Subscription } from 'dexie';
+import { sleep, isIOS, isStandaloneDisplayMode } from '../utils';
 
 const route = useRoute();
 const router = useRouter();
@@ -16,6 +17,15 @@ const audioPlayer = ref<HTMLAudioElement | null>(null);
 const fileData = ref<AudioFile | null>(null);
 const audioUrl = ref<string | null>(null);
 const isLoading = ref(true);
+const loadProgress = ref<{ step: string; pct?: number } | null>(null);
+const loadError = ref<string | null>(null);
+let isCancelled = false;
+
+const audioPreload = computed(() => {
+    // iOS PWA tends to choke if we force metadata parsing immediately for huge blobs.
+    if (isIOS() && isStandaloneDisplayMode()) return 'none';
+    return 'metadata';
+});
 
 const isPlaying = ref(false);
 const currentTime = ref(0);
@@ -157,9 +167,53 @@ const onAudioError = (e: Event) => {
     }
 };
 
+const toChunkBlob = async (chunk: FileChunk): Promise<Blob> => {
+    if (chunk.data instanceof Blob) return chunk.data;
+    // Back-compat: old records stored ArrayBuffer; wrap + migrate to Blob to reduce future memory usage.
+    if (chunk.data instanceof ArrayBuffer) {
+        const blob = new Blob([chunk.data]);
+        if (chunk.id != null) {
+            try {
+                await db.chunks.update(chunk.id, { data: blob } as any);
+            } catch (e) {
+                // Best-effort migration only
+            }
+        }
+        return blob;
+    }
+    // Fallback (shouldn't happen, but avoid crashing)
+    return new Blob([]);
+};
+
+const buildPlayableBlobFromChunks = async (expectedChunkCount: number, mimeType: string): Promise<Blob> => {
+    const parts: Blob[] = [];
+    const yieldEvery = 16; // keep UI responsive
+
+    for (let i = 0; i < expectedChunkCount; i++) {
+        if (isCancelled) throw new Error('cancelled');
+        loadProgress.value = { step: `Loading audio data… (${i + 1}/${expectedChunkCount})`, pct: Math.round(((i + 1) / expectedChunkCount) * 100) };
+
+        const chunk = await db.chunks.where({ fileId, index: i }).first();
+        if (!chunk) throw new Error(`missing chunk ${i}`);
+
+        const blobPart = await toChunkBlob(chunk as FileChunk);
+        parts.push(blobPart);
+
+        if ((i + 1) % yieldEvery === 0) {
+            // Allow render + GC breathing room on iOS Safari
+            await nextTick();
+            await sleep(0);
+        }
+    }
+
+    return new Blob(parts, { type: mimeType || 'audio/mpeg' });
+};
+
 // --- Lifecycle ---
 onMounted(async () => {
     isLoading.value = true;
+    loadError.value = null;
+    loadProgress.value = { step: 'Loading file record…' };
     try {
         const file = await db.files.get(fileId);
         if (!file) {
@@ -168,30 +222,16 @@ onMounted(async () => {
         }
         fileData.value = file;
         
-        // Reassemble chunks from IndexedDB
-        // Fetching pieces one by one or all at once? 
-        // For 300MB, fetching all data into memory as one Blob is usually okay 
-        // as long as we don't hold the original chunks too.
-        
-        const chunkRecords = await db.chunks
-            .where('fileId')
-            .equals(fileId)
-            .sortBy('index');
-            
-        if (chunkRecords.length === 0) {
-            console.error('No chunks found for file');
-            alert('Audio data is missing. Please re-upload the file.');
-            router.push('/');
-            return;
-        }
-        
-        if (chunkRecords.length !== file.chunkCount) {
-             console.warn(`Chunk mismatch: expected ${file.chunkCount}, found ${chunkRecords.length}`);
-        }
-        
-        const blobParts = chunkRecords.map(c => c.data);
-        const playableBlob = new Blob(blobParts, { type: file.mimeType || 'audio/mpeg' });
+        // Important for iOS Safari: don't load all ArrayBuffers at once; assemble sequentially and migrate old data.
+        loadProgress.value = { step: 'Preparing audio…' };
+        const playableBlob = await buildPlayableBlobFromChunks(file.chunkCount, file.mimeType || 'audio/mpeg');
+
+        if (isCancelled) return;
+        if (audioUrl.value) URL.revokeObjectURL(audioUrl.value);
         audioUrl.value = URL.createObjectURL(playableBlob);
+        // Audio URL ready; let UI render even if metadata hasn't been parsed yet (esp iOS preload=none).
+        isLoading.value = false;
+        loadProgress.value = null;
         
         if (file.playbackPosition) {
             lastSavedTime.value = file.playbackPosition;
@@ -199,9 +239,13 @@ onMounted(async () => {
         }
     } catch(err) {
         console.error(err);
+        loadError.value = 'Failed to load audio file.';
         alert("Failed to load audio file");
     } finally {
-        isLoading.value = false;
+        if (loadError.value) {
+            isLoading.value = false;
+            loadProgress.value = null;
+        }
     }
 
     // Subscribe to Bookmarks
@@ -222,6 +266,7 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+    isCancelled = true;
     // Remove event listeners
     document.removeEventListener('visibilitychange', handleVisibilityChange);
     window.removeEventListener('beforeunload', handleBeforeUnload);
@@ -265,7 +310,8 @@ const initMediaSession = () => {
   <div class="player-page">
     <div v-if="isLoading" class="loading-overlay">
         <div class="spinner"></div>
-        <p>Loading Audio...</p>
+        <p>{{ loadProgress?.step || 'Loading Audio...' }}</p>
+        <p v-if="loadProgress?.pct != null" class="loading-sub">{{ loadProgress.pct }}%</p>
     </div>
 
     <div class="header">
@@ -293,7 +339,7 @@ const initMediaSession = () => {
                 @pause="onPause"
                 @ended="onPause"
                 @error="onAudioError"
-                preload="metadata"
+                :preload="audioPreload"
             ></audio>
 
              <!-- Progress Area -->
@@ -397,6 +443,12 @@ const initMediaSession = () => {
   border-radius: 50%;
   animation: spin 1s linear infinite;
   margin-bottom: 16px;
+}
+
+.loading-sub {
+  margin-top: 6px;
+  font-size: 13px;
+  color: #8E8E93;
 }
 
 @keyframes spin {

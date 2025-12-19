@@ -13,6 +13,11 @@ export default defineConfig({
     VitePWA({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'masked-icon.svg'],
+      workbox: {
+        // iOS PWA: if Safari kills the webapp during heavy work, it may relaunch on /player/:id.
+        // Ensure offline navigation always falls back to index.html (SPA).
+        navigateFallback: 'index.html',
+      },
       manifest: {
         name: 'Audio Listener',
         short_name: 'Listener',

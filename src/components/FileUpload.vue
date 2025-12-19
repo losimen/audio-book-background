@@ -1,15 +1,14 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { db } from '../db';
-import type { AudioFile, FileChunk } from '../db';
+import type { AudioFile, FileChunk } from '../types';
+import { CHUNK_SIZE_BYTES } from '../constants';
 
 const emit = defineEmits(['uploaded']);
 const isUploading = ref(false);
 const uploadProgress = ref(0);
 const uploadStatus = ref('');
 const fileInput = ref<HTMLInputElement | null>(null);
-
-const CHUNK_SIZE = 1024 * 1024; // 1MB chunks
 
 const triggerUpload = () => {
   fileInput.value?.click();
@@ -28,8 +27,9 @@ const handleFileChange = async (event: Event) => {
   uploadProgress.value = 0;
   uploadStatus.value = 'Preparing...';
 
+  let createdFileId: number | null = null;
   try {
-    const chunkCount = Math.ceil(file.size / CHUNK_SIZE);
+    const chunkCount = Math.ceil(file.size / CHUNK_SIZE_BYTES);
     
     // 1. Create the metadata record in IndexedDB
     uploadStatus.value = 'Creating record...';
@@ -45,23 +45,21 @@ const handleFileChange = async (event: Event) => {
     };
 
     const fileId = await db.files.add(newFile);
+    createdFileId = fileId as number;
     
     // 2. Fragment the file and save chunks one by one
     // This is the CRITICAL part for iOS memory stability
     for (let i = 0; i < chunkCount; i++) {
       uploadStatus.value = `Saving part ${i + 1} of ${chunkCount}...`;
       
-      const start = i * CHUNK_SIZE;
-      const end = Math.min(start + CHUNK_SIZE, file.size);
+      const start = i * CHUNK_SIZE_BYTES;
+      const end = Math.min(start + CHUNK_SIZE_BYTES, file.size);
       const blobChunk = file.slice(start, end);
       
-      // Convert chunk to ArrayBuffer
-      const arrayBuffer = await blobChunk.arrayBuffer();
-      
       const chunkRecord: FileChunk = {
-        fileId: fileId as number,
+        fileId: createdFileId,
         index: i,
-        data: arrayBuffer
+        data: blobChunk
       };
       
       await db.chunks.add(chunkRecord);
@@ -78,6 +76,19 @@ const handleFileChange = async (event: Event) => {
     if (fileInput.value) fileInput.value.value = '';
   } catch (error) {
     console.error('Upload failed:', error);
+    // Cleanup partial state (common on iOS if the tab is killed mid-write)
+    try {
+      if (createdFileId != null) {
+        const id = createdFileId;
+        await db.transaction('rw', db.files, db.chunks, db.bookmarks, async () => {
+          await db.files.delete(id);
+          await db.chunks.where('fileId').equals(id).delete();
+          await db.bookmarks.where('fileId').equals(id).delete();
+        });
+      }
+    } catch (cleanupErr) {
+      console.warn('Cleanup failed:', cleanupErr);
+    }
     alert('Failed to save file. Storage might be full or memory limit reached.');
   } finally {
     isUploading.value = false;

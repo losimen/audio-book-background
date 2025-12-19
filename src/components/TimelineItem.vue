@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import type { Bookmark } from '../db';
+import type { Bookmark } from '../types';
 
 const props = defineProps<{
   bookmark: Bookmark;

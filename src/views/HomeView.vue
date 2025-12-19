@@ -2,7 +2,7 @@
 import { ref, onMounted, onUnmounted } from 'vue';
 import { useRouter } from 'vue-router'; // Import useRouter
 import { db } from '../db';
-import type { AudioFile } from '../db';
+import type { AudioFile } from '../types';
 import FileUpload from '../components/FileUpload.vue';
 import { liveQuery, type Subscription } from 'dexie';
 
