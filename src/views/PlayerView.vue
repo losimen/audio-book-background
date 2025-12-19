@@ -27,6 +27,33 @@ const audioPreload = computed(() => {
     return 'metadata';
 });
 
+const safePlay = () => {
+    const el = audioPlayer.value;
+    if (!el) return;
+
+    try {
+        // Must stay sync within user gesture for iOS.
+        if (el.readyState === 0) {
+            el.load();
+        }
+
+        const p = el.play();
+        if (p && typeof (p as any).catch === 'function') {
+            (p as Promise<void>).catch((err: any) => {
+                console.error('audio.play() failed:', err);
+                const name = err?.name ? String(err.name) : 'PlayError';
+                const message = err?.message ? String(err.message) : 'Unknown error';
+                alert(`${name}: ${message}`);
+            });
+        }
+    } catch (err: any) {
+        console.error('audio.play() threw:', err);
+        const name = err?.name ? String(err.name) : 'PlayError';
+        const message = err?.message ? String(err.message) : 'Unknown error';
+        alert(`${name}: ${message}`);
+    }
+};
+
 const isPlaying = ref(false);
 const currentTime = ref(0);
 const duration = ref(0);
@@ -56,7 +83,7 @@ const formatTime = (seconds: number) => {
 const togglePlay = () => {
     if (!audioPlayer.value) return;
     if (audioPlayer.value.paused) {
-        audioPlayer.value.play().catch(console.error);
+        safePlay();
     } else {
         audioPlayer.value.pause();
     }
@@ -70,7 +97,7 @@ const skip = (seconds: number) => {
 const jumpTo = (time: number) => {
     if (!audioPlayer.value) return;
     audioPlayer.value.currentTime = time;
-    if (!isPlaying.value) audioPlayer.value.play();
+    if (!isPlaying.value) safePlay();
 };
 
 const onTimeUpdate = () => {
@@ -167,6 +194,9 @@ const onAudioError = (e: Event) => {
     }
 };
 
+const onWaiting = () => console.log('[Audio] waiting', { readyState: audioPlayer.value?.readyState });
+const onCanPlay = () => console.log('[Audio] canplay', { readyState: audioPlayer.value?.readyState });
+
 const toChunkBlob = async (chunk: FileChunk): Promise<Blob> => {
     if (chunk.data instanceof Blob) return chunk.data;
     // Back-compat: old records stored ArrayBuffer; wrap + migrate to Blob to reduce future memory usage.
@@ -229,6 +259,7 @@ onMounted(async () => {
         if (isCancelled) return;
         if (audioUrl.value) URL.revokeObjectURL(audioUrl.value);
         audioUrl.value = URL.createObjectURL(playableBlob);
+        console.log('[Audio] blob ready', { size: playableBlob.size, expected: file.fileSize, mime: playableBlob.type });
         // Audio URL ready; let UI render even if metadata hasn't been parsed yet (esp iOS preload=none).
         isLoading.value = false;
         loadProgress.value = null;
@@ -335,6 +366,8 @@ const initMediaSession = () => {
                 :src="audioUrl || undefined"
                 @timeupdate="onTimeUpdate"
                 @loadedmetadata="onLoadedMetadata"
+                @waiting="onWaiting"
+                @canplay="onCanPlay"
                 @play="onPlay" 
                 @pause="onPause"
                 @ended="onPause"

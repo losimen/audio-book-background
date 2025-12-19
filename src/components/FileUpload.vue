@@ -3,6 +3,7 @@ import { ref } from 'vue';
 import { db } from '../db';
 import type { AudioFile, FileChunk } from '../types';
 import { CHUNK_SIZE_BYTES } from '../constants';
+import { getStorageEstimate, isIOS, requestPersistentStorage, sleep } from '../utils';
 
 const emit = defineEmits(['uploaded']);
 const isUploading = ref(false);
@@ -29,6 +30,17 @@ const handleFileChange = async (event: Event) => {
 
   let createdFileId: number | null = null;
   try {
+    // Best-effort: make storage persistent so iOS is less likely to evict.
+    await requestPersistentStorage();
+    const { quota, usage } = await getStorageEstimate();
+    if (quota != null && usage != null) {
+      const remaining = quota - usage;
+      if (file.size > remaining) {
+        alert('Not enough storage available for this file (quota). Free space and try again.');
+        return;
+      }
+    }
+
     const chunkCount = Math.ceil(file.size / CHUNK_SIZE_BYTES);
     
     // 1. Create the metadata record in IndexedDB
@@ -47,25 +59,35 @@ const handleFileChange = async (event: Event) => {
     const fileId = await db.files.add(newFile);
     createdFileId = fileId as number;
     
-    // 2. Fragment the file and save chunks one by one
-    // This is the CRITICAL part for iOS memory stability
-    for (let i = 0; i < chunkCount; i++) {
-      uploadStatus.value = `Saving part ${i + 1} of ${chunkCount}...`;
-      
-      const start = i * CHUNK_SIZE_BYTES;
-      const end = Math.min(start + CHUNK_SIZE_BYTES, file.size);
-      const blobChunk = file.slice(start, end);
-      
-      const chunkRecord: FileChunk = {
-        fileId: createdFileId,
-        index: i,
-        data: blobChunk
-      };
-      
-      await db.chunks.add(chunkRecord);
-      
-      // Update progress
-      uploadProgress.value = Math.round(((i + 1) / chunkCount) * 100);
+    // 2. Save chunks in batches to avoid hundreds of tiny IDB transactions (slow + crashy on iOS).
+    const BATCH_SIZE = 10;
+    for (let base = 0; base < chunkCount; base += BATCH_SIZE) {
+      const batch: FileChunk[] = [];
+      const endIdx = Math.min(base + BATCH_SIZE, chunkCount);
+
+      uploadStatus.value = `Saving… (${base + 1}-${endIdx} / ${chunkCount})`;
+
+      for (let i = base; i < endIdx; i++) {
+        const start = i * CHUNK_SIZE_BYTES;
+        const end = Math.min(start + CHUNK_SIZE_BYTES, file.size);
+        const blobChunk = file.slice(start, end);
+
+        // Safari iOS: IndexedDB Blob writes can fail; ArrayBuffer is more reliable.
+        const data = isIOS() ? await blobChunk.arrayBuffer() : blobChunk;
+
+        batch.push({
+          fileId: createdFileId,
+          index: i,
+          data,
+        });
+      }
+
+      await db.chunks.bulkAdd(batch);
+
+      uploadProgress.value = Math.round((endIdx / chunkCount) * 100);
+
+      // Yield so UI stays responsive and Safari gets breathing room.
+      await sleep(0);
     }
     
     uploadStatus.value = 'Complete!';
