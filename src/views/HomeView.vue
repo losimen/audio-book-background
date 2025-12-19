@@ -10,7 +10,16 @@ const router = useRouter();
 const files = ref<AudioFile[]>([]);
 let subscription: Subscription | null = null;
 
-onMounted(() => {
+onMounted(async () => {
+  // Initial manual fetch to ensure data is visible immediately
+  try {
+    const initialFiles = await db.files.orderBy('uploadedAt').reverse().toArray();
+    files.value = initialFiles;
+  } catch (err) {
+    console.error('Initial fetch failed:', err);
+  }
+
+  // Subscribe to changes
   const observable = liveQuery(() => db.files.orderBy('uploadedAt').reverse().toArray());
   subscription = observable.subscribe({
     next: result => files.value = result,
@@ -24,6 +33,20 @@ onUnmounted(() => {
 
 const openFile = (id: number) => {
   router.push(`/player/${id}`);
+};
+
+const deleteFile = async (id: number) => {
+  if (!confirm('Are you sure you want to delete this file?')) return;
+  
+  try {
+    await db.transaction('rw', db.files, db.bookmarks, async () => {
+      await db.files.delete(id);
+      await db.bookmarks.where('fileId').equals(id).delete();
+    });
+  } catch (error) {
+    console.error('Failed to delete file:', error);
+    alert('Error deleting file');
+  }
 };
 
 const formatTime = (date: Date) => {
@@ -59,6 +82,18 @@ const formatTime = (date: Date) => {
               </span>
             </div>
           </div>
+          
+          <button 
+            class="delete-btn" 
+            @click.stop="file.id && deleteFile(file.id)"
+            title="Delete file"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="3 6 5 6 21 6"></polyline>
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+            </svg>
+          </button>
+          
           <div class="chevron">›</div>
         </div>
         
@@ -136,6 +171,30 @@ header h1 {
 
 .progress-indicator {
   color: var(--app-accent);
+}
+
+.delete-btn {
+  background: none;
+  border: none;
+  color: #8E8E93;
+  padding: 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: all 0.2s;
+  z-index: 2;
+}
+
+.delete-btn:hover {
+  background-color: rgba(255, 59, 48, 0.1);
+  color: #FF3B30;
+}
+
+.delete-btn:active {
+  background-color: rgba(255, 59, 48, 0.2);
+  color: #FF3B30;
 }
 
 .chevron {

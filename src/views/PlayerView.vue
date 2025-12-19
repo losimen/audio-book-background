@@ -96,9 +96,13 @@ const seek = (event: Event) => {
 };
 
 const saveProgress = async () => {
-    if (!audioPlayer.value) return;
     try {
-        const time = audioPlayer.value.currentTime;
+        // Use audioPlayer.currentTime if available, otherwise fallback to tracked currentTime
+        const time = audioPlayer.value ? audioPlayer.value.currentTime : currentTime.value;
+        
+        // Don't save if time is 0 and we haven't played (sanity check)
+        if (time === 0 && !isPlaying.value && lastSavedTime.value === 0) return;
+
         await db.files.update(fileId, {
             playbackPosition: time,
             lastPlayedAt: new Date()
@@ -136,6 +140,7 @@ const saveNote = async (text: string) => {
 // --- Lifecycle ---
 onMounted(async () => {
     // Load File
+    // Also init audio player state from DB
     const file = await db.files.get(fileId);
     if (!file) {
         router.push('/');
@@ -146,6 +151,7 @@ onMounted(async () => {
     
     if (file.playbackPosition) {
         lastSavedTime.value = file.playbackPosition;
+        currentTime.value = file.playbackPosition; // Ensure reactive state matches
     }
 
     // Subscribe to Bookmarks
@@ -162,14 +168,15 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+    // Attempt final save
     saveProgress();
     if (audioUrl.value) URL.revokeObjectURL(audioUrl.value);
     if (bookmarksSub) bookmarksSub.unsubscribe();
     if (autoSaveInterval) clearInterval(autoSaveInterval);
 });
 
-const goBack = () => {
-    saveProgress();
+const goBack = async () => {
+    await saveProgress();
     router.back();
 };
 
@@ -372,6 +379,7 @@ const initMediaSession = () => {
 
 .seek-slider {
     -webkit-appearance: none;
+    appearance: none;
     width: 100%;
     height: 60px; /* Taller hit area */
     background: transparent;
