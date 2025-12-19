@@ -88,6 +88,19 @@ const onPause = () => {
     saveProgress();
 };
 
+// --- Persistence Listeners for iOS ---
+const handleVisibilityChange = () => {
+    if (document.visibilityState === 'hidden') {
+        // App is going to background - save immediately
+        saveProgress();
+    }
+};
+
+const handleBeforeUnload = () => {
+    // Best-effort sync save for desktop browsers
+    saveProgress();
+};
+
 const seek = (event: Event) => {
     const target = event.target as HTMLInputElement;
     const time = Number(target.value);
@@ -186,11 +199,27 @@ onMounted(async () => {
             saveProgress();
         }
     }, 5000);
+    
+    // Add persistence listeners for iOS
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('beforeunload', handleBeforeUnload);
 });
 
 onUnmounted(() => {
+    // Remove event listeners
+    document.removeEventListener('visibilitychange', handleVisibilityChange);
+    window.removeEventListener('beforeunload', handleBeforeUnload);
+    
     // Attempt final save
     saveProgress();
+    
+    // Properly cleanup audio element before revoking URL
+    if (audioPlayer.value) {
+        audioPlayer.value.pause();
+        audioPlayer.value.src = ''; // Clear source to prevent errors
+        audioPlayer.value.load(); // Reset the element
+    }
+    
     if (audioUrl.value) URL.revokeObjectURL(audioUrl.value);
     if (bookmarksSub) bookmarksSub.unsubscribe();
     if (autoSaveInterval) clearInterval(autoSaveInterval);
