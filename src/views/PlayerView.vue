@@ -88,10 +88,8 @@ const onPause = () => {
     saveProgress();
 };
 
-// --- Persistence Listeners for iOS ---
 const handleVisibilityChange = () => {
     if (document.visibilityState === 'hidden') {
-        // App is going to background - save immediately
         saveProgress();
     }
 };
