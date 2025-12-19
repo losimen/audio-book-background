@@ -8,15 +8,19 @@ import { liveQuery, type Subscription } from 'dexie';
 
 const router = useRouter(); 
 const files = ref<AudioFile[]>([]);
+const isLoading = ref(true);
 let subscription: Subscription | null = null;
 
 onMounted(async () => {
+  console.log('Loading file');
   // Initial manual fetch to ensure data is visible immediately
   try {
     const initialFiles = await db.files.orderBy('uploadedAt').reverse().toArray();
     files.value = initialFiles;
   } catch (err) {
     console.error('Initial fetch failed:', err);
+  } finally {
+    isLoading.value = false;
   }
 
   // Subscribe to changes
@@ -65,7 +69,13 @@ const formatTime = (date: Date) => {
     <main>
       <FileUpload />
 
-      <div class="file-list">
+      <div v-if="isLoading" class="loading-container">
+        <div class="spinner"></div>
+        <p>Loading Library...</p>
+      </div>
+
+      <div v-else class="file-list">
+        <!-- ... existing file list ... -->
         <div 
           v-for="file in files" 
           :key="file.id" 
@@ -106,10 +116,37 @@ const formatTime = (date: Date) => {
 </template>
 
 <style scoped>
+/* ... existing styles ... */
+
+.loading-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 0;
+  color: #8E8E93;
+}
+
+.spinner {
+  width: 30px;
+  height: 30px;
+  border: 3px solid #38383A;
+  border-top-color: var(--app-accent);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin-bottom: 12px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
 .home-page {
   padding: 20px;
   padding-bottom: 100px;
 }
+
+/* ... existing header h1 ... */
 
 header h1 {
   font-size: 34px;
@@ -124,6 +161,7 @@ header h1 {
   gap: 12px;
 }
 
+/* ... rest of existing styles ... */
 .file-item {
   background-color: var(--app-secondary);
   padding: 16px;

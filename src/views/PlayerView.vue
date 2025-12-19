@@ -15,6 +15,7 @@ const fileId = Number(route.params.id);
 const audioPlayer = ref<HTMLAudioElement | null>(null);
 const fileData = ref<AudioFile | null>(null);
 const audioUrl = ref<string | null>(null);
+const isLoading = ref(true);
 
 const isPlaying = ref(false);
 const currentTime = ref(0);
@@ -151,23 +152,27 @@ const onAudioError = (e: Event) => {
 
 // --- Lifecycle ---
 onMounted(async () => {
-    // Load File
-    // Also init audio player state from DB
-    const file = await db.files.get(fileId);
-    if (!file) {
-        router.push('/');
-        return;
-    }
-    fileData.value = file;
-    
-    // iOS Fix: Explicitly re-create Blob with MIME type to ensure playability
-    // This resolves issues where "File" objects from IDB aren't readable while offline/after restart on Safari
-    const playableBlob = new Blob([file.blob], { type: file.mimeType || 'audio/mpeg' });
-    audioUrl.value = URL.createObjectURL(playableBlob);
-    
-    if (file.playbackPosition) {
-        lastSavedTime.value = file.playbackPosition;
-        currentTime.value = file.playbackPosition; // Ensure reactive state matches
+    isLoading.value = true;
+    try {
+        const file = await db.files.get(fileId);
+        if (!file) {
+            router.push('/');
+            return;
+        }
+        fileData.value = file;
+        
+        const playableBlob = new Blob([file.blob], { type: file.mimeType || 'audio/mpeg' });
+        audioUrl.value = URL.createObjectURL(playableBlob);
+        
+        if (file.playbackPosition) {
+            lastSavedTime.value = file.playbackPosition;
+            currentTime.value = file.playbackPosition; // Ensure reactive state matches
+        }
+    } catch(err) {
+        console.error(err);
+        alert("Failed to load audio file");
+    } finally {
+        isLoading.value = false;
     }
 
     // Subscribe to Bookmarks
@@ -213,6 +218,11 @@ const initMediaSession = () => {
 
 <template>
   <div class="player-page">
+    <div v-if="isLoading" class="loading-overlay">
+        <div class="spinner"></div>
+        <p>Loading Audio...</p>
+    </div>
+
     <div class="header">
         <button class="icon-btn" @click="goBack">
             <span class="chevron">‹</span> Back
@@ -320,6 +330,34 @@ const initMediaSession = () => {
 </template>
 
 <style scoped>
+.loading-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: var(--app-bg);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+}
+
+.spinner {
+  width: 40px;
+  height: 40px;
+  border: 4px solid #38383A;
+  border-top-color: var(--app-accent);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin-bottom: 16px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
 .player-page {
   height: 100vh;
   background-color: var(--app-bg);
