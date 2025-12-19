@@ -1,0 +1,23 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
+
+:root {
+  --app-bg: #000000;
+  --app-text: #ffffff;
+  --app-accent: #0A84FF;
+  --app-secondary: #1C1C1E;
+  --app-border: #38383A;
+}
+
+body {
+  margin: 0;
+  font-family: 'Inter', sans-serif;
+  background-color: var(--app-bg);
+  color: var(--app-text);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Scrollbar hiding for that native feel */
+::-webkit-scrollbar {
+  display: none;
+}
