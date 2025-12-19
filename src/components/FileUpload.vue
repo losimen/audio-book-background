@@ -3,7 +3,7 @@ import { ref } from 'vue';
 import { db } from '../db';
 import type { AudioFile, FileChunk } from '../types';
 import { CHUNK_SIZE_BYTES } from '../constants';
-import { getStorageEstimate, isIOS, requestPersistentStorage, sleep } from '../utils';
+import { getStorageEstimate, inferAudioMimeType, isIOS, requestPersistentStorage, sleep } from '../utils';
 
 const emit = defineEmits(['uploaded']);
 const isUploading = ref(false);
@@ -48,7 +48,7 @@ const handleFileChange = async (event: Event) => {
     
     const newFile: Omit<AudioFile, 'id'> = {
       name: file.name,
-      mimeType: file.type || 'audio/mpeg',
+      mimeType: inferAudioMimeType(file.name, file.type),
       fileSize: file.size,
       chunkCount,
       uploadedAt: new Date(),
@@ -125,7 +125,7 @@ const handleFileChange = async (event: Event) => {
     <input 
       ref="fileInput"
       type="file" 
-      accept="audio/*,video/*,.mp3,.wav,.m4a,.aac" 
+      accept="audio/*,video/*,.mp3,.wav,.m4a,.m4b,.aac" 
       class="hidden-input"
       @change="handleFileChange"
     />

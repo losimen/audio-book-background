@@ -1,3 +1,5 @@
+import { AUDIO_MIME_BY_EXTENSION, DEFAULT_AUDIO_MIME } from './constants';
+
 export function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -37,6 +39,23 @@ export async function getStorageEstimate(): Promise<{ quota?: number; usage?: nu
   } catch {
     return {};
   }
+}
+
+function getLowerFileExtension(fileName: string): string {
+  const name = (fileName || '').trim();
+  const dot = name.lastIndexOf('.');
+  if (dot < 0) return '';
+  return name.slice(dot + 1).toLowerCase();
+}
+
+export function inferAudioMimeType(fileName: string, browserProvidedType?: string): string {
+  const t = (browserProvidedType || '').trim();
+  if (t) return t;
+
+  const ext = getLowerFileExtension(fileName);
+  if (!ext) return DEFAULT_AUDIO_MIME;
+
+  return AUDIO_MIME_BY_EXTENSION[ext] || DEFAULT_AUDIO_MIME;
 }
 
 

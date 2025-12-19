@@ -6,7 +6,7 @@ import type { AudioFile, Bookmark, FileChunk } from '../types';
 import TimelineItem from '../components/TimelineItem.vue';
 import NoteEditor from '../components/NoteEditor.vue';
 import { liveQuery, type Subscription } from 'dexie';
-import { sleep, isIOS, isStandaloneDisplayMode } from '../utils';
+import { inferAudioMimeType, sleep, isIOS, isStandaloneDisplayMode } from '../utils';
 
 const route = useRoute();
 const router = useRouter();
@@ -43,14 +43,30 @@ const safePlay = () => {
                 console.error('audio.play() failed:', err);
                 const name = err?.name ? String(err.name) : 'PlayError';
                 const message = err?.message ? String(err.message) : 'Unknown error';
-                alert(`${name}: ${message}`);
+                const details = {
+                    name,
+                    message,
+                    readyState: el.readyState,
+                    networkState: el.networkState,
+                    errorCode: el.error?.code,
+                    src: el.currentSrc || el.src
+                };
+                alert(`${name}: ${message}\n\n${JSON.stringify(details)}`);
             });
         }
     } catch (err: any) {
         console.error('audio.play() threw:', err);
         const name = err?.name ? String(err.name) : 'PlayError';
         const message = err?.message ? String(err.message) : 'Unknown error';
-        alert(`${name}: ${message}`);
+        const details = {
+            name,
+            message,
+            readyState: el.readyState,
+            networkState: el.networkState,
+            errorCode: el.error?.code,
+            src: el.currentSrc || el.src
+        };
+        alert(`${name}: ${message}\n\n${JSON.stringify(details)}`);
     }
 };
 
@@ -190,7 +206,10 @@ const onAudioError = (e: Event) => {
     const error = (e.target as HTMLAudioElement).error;
     console.error('Audio error:', error);
     if (error && error.code === 4) {
-        alert('Audio format not supported or file corrupted.');
+        const fileName = fileData.value?.name || 'unknown';
+        const declaredMime = fileData.value?.mimeType || 'unknown';
+        const inferredMime = inferAudioMimeType(fileName, declaredMime);
+        alert(`Audio error (code=${error.code}). Likely unsupported format.\n\nfile=${fileName}\nrecordMime=${declaredMime}\ninferredMime=${inferredMime}`);
     }
 };
 
@@ -236,7 +255,8 @@ const buildPlayableBlobFromChunks = async (expectedChunkCount: number, mimeType:
         }
     }
 
-    return new Blob(parts, { type: mimeType || 'audio/mpeg' });
+    const t = (mimeType || '').trim();
+    return new Blob(parts, { type: t });
 };
 
 // --- Lifecycle ---
@@ -254,7 +274,8 @@ onMounted(async () => {
         
         // Important for iOS Safari: don't load all ArrayBuffers at once; assemble sequentially and migrate old data.
         loadProgress.value = { step: 'Preparing audio…' };
-        const playableBlob = await buildPlayableBlobFromChunks(file.chunkCount, file.mimeType || 'audio/mpeg');
+        const mimeType = inferAudioMimeType(file.name, file.mimeType);
+        const playableBlob = await buildPlayableBlobFromChunks(file.chunkCount, mimeType);
 
         if (isCancelled) return;
         if (audioUrl.value) URL.revokeObjectURL(audioUrl.value);
@@ -364,6 +385,8 @@ const initMediaSession = () => {
              <audio 
                 ref="audioPlayer"
                 :src="audioUrl || undefined"
+                playsinline
+                webkit-playsinline
                 @timeupdate="onTimeUpdate"
                 @loadedmetadata="onLoadedMetadata"
                 @waiting="onWaiting"
