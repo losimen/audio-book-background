@@ -154,12 +154,8 @@ const onAudioError = (e: Event) => {
     console.error('Audio error:', error);
     if (error && error.code === 4) {
         alert('Audio format not supported or file corrupted.');
-    } else {
-        alert('Error loading audio file.');
     }
 };
-
-// ...
 
 // --- Lifecycle ---
 onMounted(async () => {
@@ -172,18 +168,30 @@ onMounted(async () => {
         }
         fileData.value = file;
         
-        // Load audio from OPFS (Origin Private File System)
-        const { getFileUrlFromOPFS } = await import('../opfs');
-        const url = await getFileUrlFromOPFS(fileId);
+        // Reassemble chunks from IndexedDB
+        // Fetching pieces one by one or all at once? 
+        // For 300MB, fetching all data into memory as one Blob is usually okay 
+        // as long as we don't hold the original chunks too.
         
-        if (!url) {
-            console.error('Audio file not found in OPFS');
-            alert('Audio file data is missing. Please re-upload the file.');
+        const chunkRecords = await db.chunks
+            .where('fileId')
+            .equals(fileId)
+            .sortBy('index');
+            
+        if (chunkRecords.length === 0) {
+            console.error('No chunks found for file');
+            alert('Audio data is missing. Please re-upload the file.');
             router.push('/');
             return;
         }
         
-        audioUrl.value = url;
+        if (chunkRecords.length !== file.chunkCount) {
+             console.warn(`Chunk mismatch: expected ${file.chunkCount}, found ${chunkRecords.length}`);
+        }
+        
+        const blobParts = chunkRecords.map(c => c.data);
+        const playableBlob = new Blob(blobParts, { type: file.mimeType || 'audio/mpeg' });
+        audioUrl.value = URL.createObjectURL(playableBlob);
         
         if (file.playbackPosition) {
             lastSavedTime.value = file.playbackPosition;

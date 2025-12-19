@@ -1,14 +1,15 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { db } from '../db';
-import type { AudioFile } from '../db';
-import { saveFileToOPFS, isOPFSSupported } from '../opfs';
+import type { AudioFile, FileChunk } from '../db';
 
 const emit = defineEmits(['uploaded']);
 const isUploading = ref(false);
 const uploadProgress = ref(0);
 const uploadStatus = ref('');
 const fileInput = ref<HTMLInputElement | null>(null);
+
+const CHUNK_SIZE = 1024 * 1024; // 1MB chunks
 
 const triggerUpload = () => {
   fileInput.value?.click();
@@ -23,24 +24,21 @@ const handleFileChange = async (event: Event) => {
   const file = files[0];
   if (!file) return;
   
-  // Check OPFS support
-  if (!isOPFSSupported()) {
-    alert('Your browser does not support the required storage API. Please use a modern browser.');
-    return;
-  }
-
   isUploading.value = true;
   uploadProgress.value = 0;
   uploadStatus.value = 'Preparing...';
 
   try {
-    // First, create the metadata record in IndexedDB to get an ID
+    const chunkCount = Math.ceil(file.size / CHUNK_SIZE);
+    
+    // 1. Create the metadata record in IndexedDB
     uploadStatus.value = 'Creating record...';
     
     const newFile: Omit<AudioFile, 'id'> = {
       name: file.name,
       mimeType: file.type || 'audio/mpeg',
       fileSize: file.size,
+      chunkCount,
       uploadedAt: new Date(),
       duration: 0,
       playbackPosition: 0
@@ -48,14 +46,30 @@ const handleFileChange = async (event: Event) => {
 
     const fileId = await db.files.add(newFile);
     
-    // Now save the actual file data to OPFS (streams in chunks, no memory issues)
-    uploadStatus.value = 'Saving audio...';
+    // 2. Fragment the file and save chunks one by one
+    // This is the CRITICAL part for iOS memory stability
+    for (let i = 0; i < chunkCount; i++) {
+      uploadStatus.value = `Saving part ${i + 1} of ${chunkCount}...`;
+      
+      const start = i * CHUNK_SIZE;
+      const end = Math.min(start + CHUNK_SIZE, file.size);
+      const blobChunk = file.slice(start, end);
+      
+      // Convert chunk to ArrayBuffer
+      const arrayBuffer = await blobChunk.arrayBuffer();
+      
+      const chunkRecord: FileChunk = {
+        fileId: fileId as number,
+        index: i,
+        data: arrayBuffer
+      };
+      
+      await db.chunks.add(chunkRecord);
+      
+      // Update progress
+      uploadProgress.value = Math.round(((i + 1) / chunkCount) * 100);
+    }
     
-    await saveFileToOPFS(fileId as number, file, (progress) => {
-      uploadProgress.value = progress;
-    });
-    
-    uploadProgress.value = 100;
     uploadStatus.value = 'Complete!';
     
     emit('uploaded');
@@ -64,7 +78,7 @@ const handleFileChange = async (event: Event) => {
     if (fileInput.value) fileInput.value.value = '';
   } catch (error) {
     console.error('Upload failed:', error);
-    alert('Failed to save file. Storage might be full.');
+    alert('Failed to save file. Storage might be full or memory limit reached.');
   } finally {
     isUploading.value = false;
     uploadProgress.value = 0;
