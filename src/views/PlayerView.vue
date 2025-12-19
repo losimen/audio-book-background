@@ -137,6 +137,18 @@ const saveNote = async (text: string) => {
     editingBookmark.value = null;
 };
 
+const onAudioError = (e: Event) => {
+    const error = (e.target as HTMLAudioElement).error;
+    console.error('Audio error:', error);
+    if (error && error.code === 4) {
+        alert('Audio format not supported or file corrupted.');
+    } else {
+        alert('Error loading audio file.');
+    }
+};
+
+// ...
+
 // --- Lifecycle ---
 onMounted(async () => {
     // Load File
@@ -147,7 +159,11 @@ onMounted(async () => {
         return;
     }
     fileData.value = file;
-    audioUrl.value = URL.createObjectURL(fileData.value.blob);
+    
+    // iOS Fix: Explicitly re-create Blob with MIME type to ensure playability
+    // This resolves issues where "File" objects from IDB aren't readable while offline/after restart on Safari
+    const playableBlob = new Blob([file.blob], { type: file.mimeType || 'audio/mpeg' });
+    audioUrl.value = URL.createObjectURL(playableBlob);
     
     if (file.playbackPosition) {
         lastSavedTime.value = file.playbackPosition;
@@ -221,6 +237,7 @@ const initMediaSession = () => {
                 @play="onPlay" 
                 @pause="onPause"
                 @ended="onPause"
+                @error="onAudioError"
                 preload="metadata"
             ></audio>
 
